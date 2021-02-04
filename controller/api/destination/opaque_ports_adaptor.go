@@ -24,26 +24,26 @@ import (
 // opaquePortsAdaptor publishes the new service profile to the
 // profileTranslator.
 type opaquePortsAdaptor struct {
-	listener    watcher.ProfileUpdateListener
-	k8sAPI      *k8s.API
-	log         *logging.Entry
-	profile     *sp.ServiceProfile
-	opaquePorts map[uint32]struct{}
+	listener watcher.ProfileUpdateListener
+	k8sAPI   *k8s.API
+	log      *logging.Entry
+	profile  *sp.ServiceProfile
+	podPorts map[uint32]struct{}
 }
 
 func newOpaquePortsAdaptor(listener watcher.ProfileUpdateListener, k8sAPI *k8s.API, log *logging.Entry) *opaquePortsAdaptor {
 	return &opaquePortsAdaptor{
-		listener:    listener,
-		k8sAPI:      k8sAPI,
-		log:         log,
-		opaquePorts: make(map[uint32]struct{}),
+		listener: listener,
+		k8sAPI:   k8sAPI,
+		log:      log,
+		podPorts: make(map[uint32]struct{}),
 	}
 }
 
 func (opa *opaquePortsAdaptor) Add(set watcher.AddressSet) {
 	ports := opa.getOpaquePorts(set)
 	for port := range ports {
-		opa.opaquePorts[port] = struct{}{}
+		opa.podPorts[port] = struct{}{}
 	}
 	opa.publish()
 }
@@ -51,13 +51,13 @@ func (opa *opaquePortsAdaptor) Add(set watcher.AddressSet) {
 func (opa *opaquePortsAdaptor) Remove(set watcher.AddressSet) {
 	ports := opa.getOpaquePorts(set)
 	for port := range ports {
-		delete(opa.opaquePorts, port)
+		delete(opa.podPorts, port)
 	}
 	opa.publish()
 }
 
 func (opa *opaquePortsAdaptor) NoEndpoints(exists bool) {
-	opa.opaquePorts = make(map[uint32]struct{})
+	opa.podPorts = make(map[uint32]struct{})
 	opa.publish()
 }
 
@@ -71,7 +71,7 @@ func (opa *opaquePortsAdaptor) getOpaquePorts(set watcher.AddressSet) map[uint32
 	for _, address := range set.Addresses {
 		pod := address.Pod
 		if pod != nil {
-			override, err := getOpaquePortsAnnotations(pod)
+			override, err := getPodOpaquePortsAnnotations(pod)
 			if err != nil {
 				opa.log.Errorf("Failed to get opaque ports annotation for pod %s: %s", pod, err)
 			}
@@ -88,21 +88,23 @@ func (opa *opaquePortsAdaptor) publish() {
 	if opa.profile != nil {
 		merged = *opa.profile
 	}
-	merged.Spec.OpaquePorts = opa.opaquePorts
+	if len(opa.podPorts) != 0 {
+		merged.Spec.OpaquePorts = opa.podPorts
+	}
 	opa.listener.Update(&merged)
 }
 
-func getOpaquePortsAnnotations(pod *corev1.Pod) (map[uint32]struct{}, error) {
-	opaquePorts := make(map[uint32]struct{})
+func getPodOpaquePortsAnnotations(pod *corev1.Pod) (map[uint32]struct{}, error) {
+	podPorts := make(map[uint32]struct{})
 	annotation := pod.Annotations[pkgk8s.ProxyOpaquePortsAnnotation]
 	if annotation != "" {
-		for _, portStr := range util.ParseOpaquePorts(annotation, pod.Spec.Containers) {
+		for _, portStr := range util.ParseContainerOpaquePorts(annotation, pod.Spec.Containers) {
 			port, err := strconv.ParseUint(portStr, 10, 32)
 			if err != nil {
 				return nil, err
 			}
-			opaquePorts[uint32(port)] = struct{}{}
+			podPorts[uint32(port)] = struct{}{}
 		}
 	}
-	return opaquePorts, nil
+	return podPorts, nil
 }

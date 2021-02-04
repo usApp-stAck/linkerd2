@@ -22,6 +22,7 @@ import (
 type (
 	server struct {
 		endpoints     *watcher.EndpointsWatcher
+		services      *watcher.ServiceWatcher
 		profiles      *watcher.ProfileWatcher
 		trafficSplits *watcher.TrafficSplitWatcher
 		ips           *watcher.IPWatcher
@@ -64,12 +65,14 @@ func NewServer(
 		"component": "server",
 	})
 	endpoints := watcher.NewEndpointsWatcher(k8sAPI, log, enableEndpointSlices)
+	services := watcher.NewServiceWatcher(k8sAPI, log)
 	profiles := watcher.NewProfileWatcher(k8sAPI, log)
 	trafficSplits := watcher.NewTrafficSplitWatcher(k8sAPI, log)
 	ips := watcher.NewIPWatcher(k8sAPI, endpoints, log)
 
 	srv := server{
 		endpoints,
+		services,
 		profiles,
 		trafficSplits,
 		ips,
@@ -212,7 +215,7 @@ func (s *server) GetProfile(dest *pb.GetDestination, stream pb.Destination_GetPr
 				if err != nil {
 					log.Errorf("failed to set opaque port annotation on pod: %s", err)
 				}
-				opaquePorts, err = getOpaquePortsAnnotations(pod)
+				opaquePorts, err = getPodOpaquePortsAnnotations(pod)
 				if err != nil {
 					log.Errorf("failed to get opaque ports annotation for pod: %s", err)
 				}
@@ -288,6 +291,14 @@ func (s *server) GetProfile(dest *pb.GetDestination, stream pb.Destination_GetPr
 		return err
 	}
 	defer s.trafficSplits.Unsubscribe(service, tsAdaptor)
+
+	// TODO
+	err = s.services.Subscribe(service, tsAdaptor)
+	if err != nil {
+		log.Warnf("Failed to subscribe to service updates for %s: %s", service, err)
+		return err
+	}
+	defer s.services.Unsubscribe(service, tsAdaptor)
 
 	// The fallback accepts updates from a primary and secondary source and
 	// passes the appropriate profile updates to the adaptor.

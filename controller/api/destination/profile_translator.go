@@ -2,6 +2,7 @@ package destination
 
 import (
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/golang/protobuf/ptypes/duration"
@@ -38,6 +39,7 @@ func (pt *profileTranslator) Update(profile *sp.ServiceProfile) {
 		pt.stream.Send(pt.defaultServiceProfile())
 		return
 	}
+	fmt.Printf("pt update=%v\n", profile)
 	destinationProfile, err := pt.toServiceProfile(profile)
 	if err != nil {
 		pt.log.Error(err)
